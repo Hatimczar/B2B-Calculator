@@ -13,5 +13,8 @@
 			"binding": "WORKER_SELF_REFERENCE",
 			"service": "florence-price-calculator"
 		}
-	]
+	],
+	"vars": {
+		"STOCK_SHEET_BASE_URL": "https://stocks.florencetrading.me"
+	}
 }

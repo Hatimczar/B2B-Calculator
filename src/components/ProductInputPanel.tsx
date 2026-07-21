@@ -1,13 +1,60 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useFlorenceStore } from '@/store/useFlorenceStore';
 import { Card, SectionHeader, Field, TextInput, NumberInput, SelectInput, Row, Badge } from './ui';
 import { costFromRRP, normalizeCost, formatAED } from '@/lib/calculations';
 
+interface PartLookupResult {
+  found: boolean;
+  description?: string;
+  cost?: number;
+  currency?: 'AED' | 'USD';
+  source?: 'apple' | 'origin-acoustics' | 'it4profit';
+  vendor?: string;
+}
+
+const SOURCE_LABEL: Record<string, string> = {
+  apple: 'Apple stock list',
+  'origin-acoustics': 'Origin Acoustics',
+  it4profit: 'IT4Profit',
+};
+
 export function ProductInputPanel() {
   const { product, updateProduct, rules } = useFlorenceStore();
   const [showRrpTool, setShowRrpTool] = useState(false);
+
+  const [lookupState, setLookupState] = useState<'idle' | 'loading' | 'found' | 'not-found' | 'error'>('idle');
+  const [lookupResult, setLookupResult] = useState<PartLookupResult | null>(null);
+  const lastLookedUpSku = useRef<string>('');
+
+  useEffect(() => {
+    const sku = product.sku.trim();
+    if (!sku || sku === lastLookedUpSku.current) return;
+
+    const timeoutId = setTimeout(async () => {
+      lastLookedUpSku.current = sku;
+      setLookupState('loading');
+      try {
+        const res = await fetch(`/api/part-lookup?partNumber=${encodeURIComponent(sku)}`);
+        const data = (await res.json()) as PartLookupResult;
+        if (!res.ok || !data.found || typeof data.cost !== 'number') {
+          setLookupResult(null);
+          setLookupState('not-found');
+          return;
+        }
+        setLookupResult(data);
+        setLookupState('found');
+        updateProduct({ costRaw: data.cost, ...(data.description ? { name: product.name || data.description } : {}) });
+      } catch {
+        setLookupResult(null);
+        setLookupState('error');
+      }
+    }, 500);
+
+    return () => clearTimeout(timeoutId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [product.sku]);
 
   const { costExVat, costInclVat } = normalizeCost(product.costRaw, product.costType, rules.vatPercent);
   const rrpDerivedCost = product.rrp > 0 ? costFromRRP(product.rrp, rules) : 0;
@@ -30,6 +77,19 @@ export function ProductInputPanel() {
             value={product.sku}
             onChange={(e) => updateProduct({ sku: e.target.value })}
           />
+          {lookupState === 'loading' && <span className="mt-1 block text-[11px] text-muted/80">Looking up cost…</span>}
+          {lookupState === 'found' && lookupResult && (
+            <span className="mt-1 block text-[11px] text-profit">
+              Cost auto-filled from {SOURCE_LABEL[lookupResult.source ?? ''] ?? 'Florence Stock Sheet'}
+              {lookupResult.currency === 'USD' ? ' — this is a USD cost, convert to AED before relying on it' : ''}
+            </span>
+          )}
+          {lookupState === 'not-found' && (
+            <span className="mt-1 block text-[11px] text-muted/80">Not found in the Stock Sheet — enter cost manually</span>
+          )}
+          {lookupState === 'error' && (
+            <span className="mt-1 block text-[11px] text-muted/80">Couldn&apos;t reach the Stock Sheet — enter cost manually</span>
+          )}
         </Field>
         <Field label="Brand">
           <TextInput
